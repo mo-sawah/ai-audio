@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Audio
  * Description: Professional Text-to-Speech plugin using Google TTS and ChatGPT APIs to generate audio from article content
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * Text Domain: ai-audio
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('AI_AUDIO_VERSION', '1.0.2');
+define('AI_AUDIO_VERSION', '1.0.3');
 define('AI_AUDIO_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AI_AUDIO_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
@@ -62,16 +62,33 @@ class AIAudioPlugin {
     }
     
     public function test_ajax() {
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('AI Audio: Test AJAX called');
-        }
+        // Add detailed debugging
+        error_log('=== AI Audio Test AJAX Handler Called ===');
+        error_log('Request method: ' . $_SERVER['REQUEST_METHOD']);
+        error_log('Is AJAX: ' . (defined('DOING_AJAX') && DOING_AJAX ? 'YES' : 'NO'));
+        error_log('POST data: ' . print_r($_POST, true));
+        error_log('Action received: ' . ($_POST['action'] ?? 'NONE'));
+        error_log('Nonce received: ' . ($_POST['nonce'] ?? 'NONE'));
         
-        wp_send_json_success(array(
-            'message' => 'AJAX is working!',
+        $nonce_check = isset($_POST['nonce']) ? wp_verify_nonce($_POST['nonce'], 'ai_audio_nonce') : false;
+        error_log('Nonce verification: ' . ($nonce_check ? 'VALID' : 'INVALID'));
+        
+        // Send response without nonce check for testing
+        $response = array(
+            'message' => 'AJAX handler is working!',
             'timestamp' => current_time('mysql'),
             'user_id' => get_current_user_id(),
-            'post_data' => $_POST
-        ));
+            'nonce_received' => $_POST['nonce'] ?? 'none',
+            'expected_nonce' => wp_create_nonce('ai_audio_nonce'),
+            'nonce_valid' => $nonce_check,
+            'doing_ajax' => defined('DOING_AJAX') && DOING_AJAX,
+            'request_method' => $_SERVER['REQUEST_METHOD'],
+            'handler_called' => true
+        );
+        
+        error_log('Sending response: ' . print_r($response, true));
+        
+        wp_send_json_success($response);
     }
     
     public function frontend_scripts() {
