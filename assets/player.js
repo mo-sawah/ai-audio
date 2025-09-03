@@ -118,6 +118,17 @@ class AIAudioPlayer {
     const aiService = this.container.dataset.aiService;
     const voice = this.container.dataset.voice;
 
+    if (aiAudio.debug) {
+      console.log(
+        "AI Audio: Loading audio for post",
+        postId,
+        "with service",
+        aiService,
+        "and voice",
+        voice
+      );
+    }
+
     try {
       // First check if audio already exists
       const checkResponse = await fetch(aiAudio.ajaxUrl, {
@@ -134,7 +145,15 @@ class AIAudioPlayer {
         }),
       });
 
+      if (!checkResponse.ok) {
+        throw new Error(`HTTP error! status: ${checkResponse.status}`);
+      }
+
       const checkData = await checkResponse.json();
+
+      if (aiAudio.debug) {
+        console.log("AI Audio: Check existing response", checkData);
+      }
 
       let audioUrl = null;
 
@@ -160,7 +179,15 @@ class AIAudioPlayer {
           }),
         });
 
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const data = await response.json();
+
+        if (aiAudio.debug) {
+          console.log("AI Audio: Generate response", data);
+        }
 
         if (data.success && data.data.audio_url) {
           audioUrl = data.data.audio_url;
@@ -170,15 +197,38 @@ class AIAudioPlayer {
       }
 
       if (audioUrl) {
+        if (aiAudio.debug) {
+          console.log("AI Audio: Creating audio element with URL", audioUrl);
+        }
+
         this.audio = new Audio(audioUrl);
         this.setupAudioEvents();
 
         // Wait for audio to be ready
         await new Promise((resolve, reject) => {
-          this.audio.addEventListener("canplaythrough", resolve, {
-            once: true,
-          });
-          this.audio.addEventListener("error", reject, { once: true });
+          const timeout = setTimeout(() => {
+            reject(new Error("Audio loading timeout"));
+          }, 30000);
+
+          this.audio.addEventListener(
+            "canplaythrough",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true }
+          );
+
+          this.audio.addEventListener(
+            "error",
+            (e) => {
+              clearTimeout(timeout);
+              console.error("Audio loading error:", e);
+              reject(new Error("Audio failed to load"));
+            },
+            { once: true }
+          );
+
           this.audio.load();
         });
 

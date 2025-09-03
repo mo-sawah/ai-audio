@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Audio
  * Description: Professional Text-to-Speech plugin using Google TTS and ChatGPT APIs to generate audio from article content
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * Text Domain: ai-audio
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('AI_AUDIO_VERSION', '1.0.1');
+define('AI_AUDIO_VERSION', '1.0.2');
 define('AI_AUDIO_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AI_AUDIO_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
@@ -59,6 +59,19 @@ class AIAudioPlugin {
             wp_enqueue_script('ai-audio-admin', AI_AUDIO_PLUGIN_URL . 'assets/admin.js', array('jquery'), AI_AUDIO_VERSION, true);
             wp_enqueue_style('ai-audio-admin', AI_AUDIO_PLUGIN_URL . 'assets/admin.css', array(), AI_AUDIO_VERSION);
         }
+    }
+    
+    public function test_ajax() {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('AI Audio: Test AJAX called');
+        }
+        
+        wp_send_json_success(array(
+            'message' => 'AJAX is working!',
+            'timestamp' => current_time('mysql'),
+            'user_id' => get_current_user_id(),
+            'post_data' => $_POST
+        ));
     }
     
     public function frontend_scripts() {
