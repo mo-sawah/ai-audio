@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Audio
  * Description: Professional Text-to-Speech plugin using Google TTS and ChatGPT APIs to generate audio from article content
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * Text Domain: ai-audio
@@ -15,26 +15,33 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('AI_AUDIO_VERSION', '1.0.4');
+define('AI_AUDIO_VERSION', '1.0.5');
 define('AI_AUDIO_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AI_AUDIO_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
 class AIAudioPlugin {
     
     public function __construct() {
+        // Register AJAX actions immediately to avoid header issues
+        add_action('wp_ajax_generate_audio', array($this, 'generate_audio'));
+        add_action('wp_ajax_nopriv_generate_audio', array($this, 'generate_audio'));
+        add_action('wp_ajax_check_existing_audio', array($this, 'check_existing_audio'));
+        add_action('wp_ajax_nopriv_check_existing_audio', array($this, 'check_existing_audio'));
+        add_action('wp_ajax_ai_audio_test', array($this, 'test_ajax'));
+        add_action('wp_ajax_nopriv_ai_audio_test', array($this, 'test_ajax'));
+        
+        // Hook other actions into init
         add_action('init', array($this, 'init'));
     }
     
     public function init() {
-        // Hook into WordPress
+        // Other WordPress hooks
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'admin_scripts'));
         add_action('wp_enqueue_scripts', array($this, 'frontend_scripts'));
         add_action('add_meta_boxes', array($this, 'add_meta_boxes'));
         add_action('save_post', array($this, 'save_post_meta'));
         add_filter('the_content', array($this, 'add_audio_player'));
-        add_action('wp_ajax_generate_audio', array($this, 'generate_audio'));
-        add_action('wp_ajax_nopriv_generate_audio', array($this, 'generate_audio'));
         
         // Register settings
         add_action('admin_init', array($this, 'register_settings'));
@@ -61,44 +68,335 @@ class AIAudioPlugin {
         }
     }
     
-    public function test_ajax() {
-        // Add detailed debugging
-        error_log('=== AI Audio Test AJAX Handler Called ===');
-        error_log('Request method: ' . $_SERVER['REQUEST_METHOD']);
-        error_log('Is AJAX: ' . (defined('DOING_AJAX') && DOING_AJAX ? 'YES' : 'NO'));
-        error_log('POST data: ' . print_r($_POST, true));
-        error_log('Action received: ' . ($_POST['action'] ?? 'NONE'));
-        error_log('Nonce received: ' . ($_POST['nonce'] ?? 'NONE'));
-        
-        $nonce_check = isset($_POST['nonce']) ? wp_verify_nonce($_POST['nonce'], 'ai_audio_nonce') : false;
-        error_log('Nonce verification: ' . ($nonce_check ? 'VALID' : 'INVALID'));
-        
-        // Send response without nonce check for testing
-        $response = array(
-            'message' => 'AJAX handler is working!',
-            'timestamp' => current_time('mysql'),
-            'user_id' => get_current_user_id(),
-            'nonce_received' => $_POST['nonce'] ?? 'none',
-            'expected_nonce' => wp_create_nonce('ai_audio_nonce'),
-            'nonce_valid' => $nonce_check,
-            'doing_ajax' => defined('DOING_AJAX') && DOING_AJAX,
-            'request_method' => $_SERVER['REQUEST_METHOD'],
-            'handler_called' => true
-        );
-        
-        error_log('Sending response: ' . print_r($response, true));
-        
-        wp_send_json_success($response);
-    }
-    
     public function frontend_scripts() {
+        if (!is_single()) {
+            return;
+        }
+        
         wp_enqueue_script('ai-audio-player', AI_AUDIO_PLUGIN_URL . 'assets/player.js', array('jquery'), AI_AUDIO_VERSION, true);
         wp_enqueue_style('ai-audio-player', AI_AUDIO_PLUGIN_URL . 'assets/player.css', array(), AI_AUDIO_VERSION);
         
+        $nonce = wp_create_nonce('ai_audio_nonce');
+        
         wp_localize_script('ai-audio-player', 'aiAudio', array(
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('ai_audio_nonce')
+            'nonce' => $nonce,
+            'pluginUrl' => AI_AUDIO_PLUGIN_URL,
+            'debug' => defined('WP_DEBUG') && WP_DEBUG,
+            'testNonce' => wp_verify_nonce($nonce, 'ai_audio_nonce')
         ));
+        
+        // Debug info
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('AI Audio: Nonce generated: ' . $nonce);
+            error_log('AI Audio: Nonce verification test: ' . wp_verify_nonce($nonce, 'ai_audio_nonce'));
+        }
+    }
+    
+    // Test AJAX handler
+    public function test_ajax() {
+        // Start clean output buffer
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        ob_start();
+        
+        // Log the test
+        error_log('AI Audio: Test AJAX handler called successfully');
+        
+        // Simple response
+        wp_send_json_success(array(
+            'message' => 'AJAX working!',
+            'timestamp' => current_time('mysql'),
+            'nonce_received' => $_POST['nonce'] ?? 'none',
+            'handler_working' => true
+        ));
+    }
+    
+    public function check_existing_audio() {
+        // Clean output buffer
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        ob_start();
+        
+        error_log('AI Audio: check_existing_audio called');
+        
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai_audio_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $voice = sanitize_text_field($_POST['voice'] ?? 'en-US-Wavenet-D');
+        
+        if (!$post_id) {
+            wp_send_json_error('Invalid post ID');
+        }
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            wp_send_json_error('Post not found');
+        }
+        
+        // Generate content hash
+        $content = $this->prepare_content_for_audio($post);
+        $content_hash = md5($content . $voice);
+        
+        // Check if audio file exists
+        $upload_dir = wp_upload_dir();
+        $audio_dir = $upload_dir['basedir'] . '/ai-audio/';
+        $filename = 'audio_' . $content_hash . '.mp3';
+        $filepath = $audio_dir . $filename;
+        
+        if (file_exists($filepath)) {
+            $audio_url = $upload_dir['baseurl'] . '/ai-audio/' . $filename;
+            wp_send_json_success(array('audio_url' => $audio_url));
+        } else {
+            wp_send_json_error('Audio not found');
+        }
+    }
+    
+    public function generate_audio() {
+        // Clean output buffer
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        ob_start();
+        
+        error_log('AI Audio: generate_audio called');
+        
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai_audio_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $ai_service = sanitize_text_field($_POST['ai_service'] ?? 'google');
+        $voice = sanitize_text_field($_POST['voice'] ?? 'en-US-Wavenet-D');
+        
+        if (!$post_id) {
+            wp_send_json_error('Invalid post ID');
+        }
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            wp_send_json_error('Post not found');
+        }
+        
+        $content = $this->prepare_content_for_audio($post);
+        
+        if (empty($content)) {
+            wp_send_json_error('No content to convert to audio');
+        }
+        
+        $options = get_option('ai_audio_options', array());
+        
+        // Validate API keys
+        if ($ai_service === 'google') {
+            if (empty($options['google_api_key'])) {
+                wp_send_json_error('Google TTS API key not configured. Please add your API key in Settings → AI Audio.');
+            }
+            $api_key = $options['google_api_key'];
+        } else {
+            if (empty($options['chatgpt_api_key'])) {
+                wp_send_json_error('OpenAI API key not configured. Please add your API key in Settings → AI Audio.');
+            }
+            $api_key = $options['chatgpt_api_key'];
+        }
+        
+        // Debug content
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('AI Audio: Content to convert: ' . substr($content, 0, 100) . '...');
+            error_log('AI Audio: Using service: ' . $ai_service . ', voice: ' . $voice);
+        }
+        
+        // Generate audio
+        if ($ai_service === 'google') {
+            $audio_url = $this->generate_google_tts($content, $voice, $api_key);
+        } else {
+            $audio_url = $this->generate_chatgpt_tts($content, $voice, $api_key);
+        }
+        
+        if ($audio_url) {
+            // Store audio info in post meta for future reference
+            update_post_meta($post_id, '_ai_audio_generated', array(
+                'service' => $ai_service,
+                'voice' => $voice,
+                'url' => $audio_url,
+                'generated_at' => current_time('timestamp')
+            ));
+            
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('AI Audio: Successfully generated audio: ' . $audio_url);
+            }
+            
+            wp_send_json_success(array(
+                'audio_url' => $audio_url,
+                'duration' => 0
+            ));
+        } else {
+            wp_send_json_error('Failed to generate audio. Please check your API keys and try again.');
+        }
+    }
+    
+private function prepare_content_for_audio($post) {
+    // Get post content
+    $content = $post->post_content;
+    
+    // Apply content filters
+    $content = apply_filters('the_content', $content);
+    
+    // Remove HTML tags
+    $content = strip_tags($content);
+    
+    // Remove shortcodes
+    $content = strip_shortcodes($content);
+    
+    // Clean up whitespace
+    $content = preg_replace('/\s+/', ' ', $content);
+    $content = trim($content);
+    
+    // Add title at the beginning
+    $title = get_the_title($post->ID);
+    $content = $title . '. ' . $content;
+    
+    // Limit content length (to control API costs)
+    $word_limit = apply_filters('ai_audio_word_limit', 500);
+    $content = wp_trim_words($content, $word_limit, '');
+    
+    // Clean up common problematic characters for TTS
+    $content = str_replace(
+        array('“', '”', '‘', '’'),
+        array('"', '"', "'", "'"),
+        $content
+    );
+    $content = str_replace('&nbsp;', ' ', $content);
+    $content = str_replace('&amp;', 'and', $content);
+    
+    return $content;
+}
+
+    
+    private function generate_google_tts($text, $voice, $api_key) {
+        if (empty($api_key)) {
+            return false;
+        }
+        
+        $url = 'https://texttospeech.googleapis.com/v1/text:synthesize?key=' . $api_key;
+        
+        $data = array(
+            'input' => array(
+                'text' => $text
+            ),
+            'voice' => array(
+                'languageCode' => 'en-US',
+                'name' => $voice,
+                'ssmlGender' => strpos($voice, '-D') !== false || strpos($voice, '-A') !== false ? 'MALE' : 'FEMALE'
+            ),
+            'audioConfig' => array(
+                'audioEncoding' => 'MP3'
+            )
+        );
+        
+        $response = wp_remote_post($url, array(
+            'headers' => array(
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 30
+        ));
+        
+        if (is_wp_error($response)) {
+            error_log('Google TTS HTTP Error: ' . $response->get_error_message());
+            return false;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        if ($response_code !== 200) {
+            error_log('Google TTS API Error - HTTP ' . $response_code . ': ' . $body);
+            return false;
+        }
+        
+        $result = json_decode($body, true);
+        
+        if (!$result) {
+            error_log('Google TTS JSON Decode Error: ' . json_last_error_msg());
+            return false;
+        }
+        
+        if (isset($result['audioContent'])) {
+            // Save the audio file
+            $upload_dir = wp_upload_dir();
+            $audio_dir = $upload_dir['basedir'] . '/ai-audio/';
+            
+            if (!file_exists($audio_dir)) {
+                wp_mkdir_p($audio_dir);
+            }
+            
+            $filename = 'audio_' . md5($text . $voice) . '.mp3';
+            $filepath = $audio_dir . $filename;
+            
+            // Decode base64 audio content
+            $audio_data = base64_decode($result['audioContent']);
+            
+            if (file_put_contents($filepath, $audio_data)) {
+                return $upload_dir['baseurl'] . '/ai-audio/' . $filename;
+            }
+        } else if (isset($result['error'])) {
+            error_log('Google TTS API Error: ' . $result['error']['message']);
+        }
+        
+        return false;
+    }
+    
+    private function generate_chatgpt_tts($text, $voice, $api_key) {
+        if (empty($api_key)) {
+            return false;
+        }
+        
+        $url = 'https://api.openai.com/v1/audio/speech';
+        
+        $data = array(
+            'model' => 'tts-1',
+            'input' => $text,
+            'voice' => $voice
+        );
+        
+        $response = wp_remote_post($url, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 30
+        ));
+        
+        if (is_wp_error($response)) {
+            error_log('OpenAI TTS Error: ' . $response->get_error_message());
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        
+        if (!empty($body)) {
+            // Save the audio file
+            $upload_dir = wp_upload_dir();
+            $audio_dir = $upload_dir['basedir'] . '/ai-audio/';
+            
+            if (!file_exists($audio_dir)) {
+                wp_mkdir_p($audio_dir);
+            }
+            
+            $filename = 'audio_' . md5($text . $voice) . '.mp3';
+            $filepath = $audio_dir . $filename;
+            
+            if (file_put_contents($filepath, $body)) {
+                return $upload_dir['baseurl'] . '/ai-audio/' . $filename;
+            }
+        }
+        
+        return false;
     }
     
     public function add_meta_boxes() {
@@ -119,8 +417,6 @@ class AIAudioPlugin {
         $ai_service = get_post_meta($post->ID, '_ai_audio_service', true);
         $voice = get_post_meta($post->ID, '_ai_audio_voice', true);
         $theme = get_post_meta($post->ID, '_ai_audio_theme', true);
-        
-        $options = get_option('ai_audio_options', array());
         ?>
         <div class="ai-audio-meta-box">
             <p>
@@ -305,48 +601,6 @@ class AIAudioPlugin {
         </div>
         <?php
         return ob_get_clean();
-    }
-    
-    public function generate_audio() {
-        check_ajax_referer('ai_audio_nonce', 'nonce');
-        
-        $post_id = intval($_POST['post_id']);
-        $ai_service = sanitize_text_field($_POST['ai_service']);
-        $voice = sanitize_text_field($_POST['voice']);
-        
-        $post = get_post($post_id);
-        if (!$post) {
-            wp_die('Invalid post ID');
-        }
-        
-        $content = strip_tags($post->post_content);
-        $content = wp_trim_words($content, 500); // Limit for demo
-        
-        $options = get_option('ai_audio_options', array());
-        
-        if ($ai_service === 'google') {
-            $audio_url = $this->generate_google_tts($content, $voice, $options['google_api_key'] ?? '');
-        } else {
-            $audio_url = $this->generate_chatgpt_tts($content, $voice, $options['chatgpt_api_key'] ?? '');
-        }
-        
-        if ($audio_url) {
-            wp_send_json_success(array('audio_url' => $audio_url));
-        } else {
-            wp_send_json_error('Failed to generate audio');
-        }
-    }
-    
-    private function generate_google_tts($text, $voice, $api_key) {
-        // Implement Google TTS API call
-        // This is a simplified version - you'll need to implement the actual API call
-        return 'https://example.com/generated-audio.mp3';
-    }
-    
-    private function generate_chatgpt_tts($text, $voice, $api_key) {
-        // Implement ChatGPT TTS API call
-        // This is a simplified version - you'll need to implement the actual API call
-        return 'https://example.com/generated-audio.mp3';
     }
     
     public function settings_page() {
