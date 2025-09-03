@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Audio
  * Description: Professional Text-to-Speech plugin using Google TTS and ChatGPT APIs to generate audio from article content
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * Text Domain: ai-audio
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('AI_AUDIO_VERSION', '1.0.0');
+define('AI_AUDIO_VERSION', '1.0.1');
 define('AI_AUDIO_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AI_AUDIO_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
